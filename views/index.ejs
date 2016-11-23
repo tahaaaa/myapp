@@ -1,0 +1,226 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+
+<script src="https://static.opentok.com/v2/js/opentok.min.js"></script>
+
+<link rel="stylesheet" href="https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/themes/smoothness/jquery-ui.css">
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.1.1/jquery.min.js"> </script>
+<script src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/jquery-ui.min.js"></script>
+
+
+<style>
+
+.leftBar {
+  position: absolute;
+  left: 0;
+  width: 300px;
+}
+
+.rightBar {
+  position: absolute;
+  right: 0;
+  width: 500px;
+}
+
+.middle {
+  margin-left: 300px;
+  margin-right: 500px;
+}
+
+</style>
+
+
+</head>
+
+
+<script>
+  var connectionIds = {};
+  var messages = [];
+  var videoId = false; // stores video ID, false means that archiving never occurred
+  var session = OT.initSession('<%= apiKey %>', '<%= sessionId %>');
+
+
+  session.connect('<%= token %>', function(error){
+    if(!error){
+      var publisher = OT.initPublisher("myFeed", {
+        insertMode: 'replace',
+        name: '<%= user %>'
+      });
+      session.publish(publisher);
+      $(function() {
+        $('#chat').draggable();
+        $('#myFeed').draggable();
+        $('#myFeed').resizable({
+          aspectRatio: true
+        });
+      });
+    }
+    else {
+      alert("Error!" + error)
+    }
+  });
+
+  session.on('streamCreated', function(subscriberObject){
+    var subscriber = session.subscribe(subscriberObject.stream, document.getElementById('everyoneElse'), {insertMode: 'append'})
+    // button that lets moderator kick people
+    connectionIds[subscriber.stream.connection.connectionId] = {elem: subscriber.id};
+    $('#' + subscriber.id).after('<input type="button" name="kick" onclick="moderate(this.id)" value="Kick" id="' + subscriber.stream.connection.connectionId + '"></input>');
+    $(function() {
+      $('#' + subscriber.id).draggable();
+      $('#' + subscriber.id).resizable({
+        aspectRatio: true
+      });
+    });
+  });
+
+
+//signaling and chat block starts here
+  function sendMessage(type){
+    session.signal(
+      {
+        type: 'text',
+        data: '<%= user %>' + ' : ' + document.getElementById(type).value
+      },
+      function(error){
+        if(error){
+          alert("Error when sending the message. " + error.code + "  " + error.message);
+        }
+      }
+    )
+  }
+
+  function raiseHand() {
+    session.signal(
+      {
+        type: 'hand',
+        data: '<%= user %>'
+      },
+      function(error){
+        if(error){
+          alert("Error when sending the message. " + error.code + " " + error.message);
+        }
+      }
+    )
+  }
+
+  function printChat() {
+    document.getElementById("chatbox").innerHTML = messages.join('<br>');
+  }
+
+  session.on("signal", function receivedMessageCallback(signal) {
+    if(signal.type === 'signal:text'){
+      messages.push(signal.data);
+      printChat();
+    }
+    else if(signal.type === 'signal:hand'){
+      $('#' + connectionIds[signal.from.connectionId].elem).css({'border-style':'dashed',
+      'border-color':'blue',
+      'border-width':'3px'
+      });
+      $('#' + signal.from.connectionId).after('<input type="button" name="lowerHand" onclick=lowerHand(this) id="' + signal.from.connectionId + '" value="🖕"></input>');
+    }
+    else{
+      alert('Sorry, corrupted information received.');
+    }
+  });
+
+  function lowerHand(button){
+    $('#' + connectionIds[button.id].elem).css({'border-style':'none'});
+    $(button).remove();
+  }
+// signaling and chat block ends here
+
+
+
+// connection event block starts here
+  session.on("connectionCreated", function(event) {
+    connectionIds[event.connection.connectionId] = {user: event.connection.data};
+    messages.push(event.connection.data + ' just joined');
+    printChat();
+  });
+
+  session.on("connectionDestroyed", function(event){
+    // removes the attached kick button if someone disconnects
+    $('#' + event.connection.connectionId).remove();
+    // deletes the connection ID from the array if someone disconnects
+    delete connectionIds[event.connection.connectionId];
+    messages.push(event.connection.data + ' just left');
+    printChat();
+  });
+// connection event block ends here
+
+
+
+// moderation block begins here
+  function moderate(id) {
+    if(session.capabilities.forceDisconnect == 1) {
+      session.forceDisconnect(id);
+    }
+    else {
+      alert('Sorry you aren\'t allowed to do this!');
+    }
+  }
+// moderation block ends here
+
+
+
+// archiving block starts here
+  function record(button) {
+    if(button.value === 'Record') {
+      button.value='Stop Recording';
+      $(document).ready(function(){
+        $.post("room.js", {request: 'start', sessionId: '<%= sessionId %>'}, function(data){
+          alert("the recording started : " + data);
+          videoId = data;
+        });
+      });
+    }
+    else {
+        button.value='Record';
+        if(!videoId === false)
+          $(document).ready(function() {
+            $.post("room.js", {request: 'stop', videoId: videoId}, function(data){
+              alert("the recording stopped: " + data);
+            });
+          });
+    }
+  }
+// archiving block ends here
+
+
+</script>
+
+
+<body>
+
+<!-- left bar has host's feed and the record button -->
+  <div class="leftBar">
+    <div id="myFeed"></div>
+    <input type="button" name="rec" onclick="record(this)" value="Record" />
+  </div>
+
+<!-- right bar has chat -->
+  <div class="rightBar">
+    <div id="chat">
+      <p type="text" id="chatbox"></p>
+      <form>
+        <input type="text" id="chatSubmission" placeholder="Message">
+        <button type="reset" onClick="sendMessage('chatSubmission')">Send</button>
+        <button type="button" onClick="raiseHand()">✋</button>
+      </form>
+    </div>
+  </div>
+
+
+<!-- middle of page has everyone else's feeds -->
+  <div class="middle">
+    <div id="allFeeds">
+      <!-- <button onClick="disconnectMe()">Disconnect</button> -->
+      <div id="everyoneElse"></div>
+    </div>
+  </div>
+
+
+</body>
+</html>

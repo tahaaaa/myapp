@@ -1,0 +1,19 @@
+<!DOCTYPE HTML>
+<html>
+<head></head>
+<body>
+  <br />
+  <form align="center">
+    <input type="text" id="room" placeholder="Room">
+    <input type="text" id="username" placeholder="Name">
+    <input type="checkbox" id="mod"> Moderator
+    <input type="button" value="Join!" onclick="redirect()">
+  </form>
+  <script>
+    function redirect() {
+      var options = "room/" + document.getElementById('room').value + "?user=" + document.getElementById('username').value + "&mod=" + document.getElementById('mod').checked;
+      location.replace(options);
+    }
+  </script>
+</body>
+</html>
