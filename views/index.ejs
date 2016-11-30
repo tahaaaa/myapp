@@ -86,7 +86,7 @@ p {
     connectionIds[subscriberObject.stream.connection.connectionId] = {elem: subscriber.id};
     // button that lets moderator kick people only for moderator
     if('<%= mod %>' === 'true') {
-      var kickButton = $('<input type="button" name="kick" onclick="moderate(this)" value="Kick" class="' + subscriber.stream.connection.connectionId + '"></input>');
+      var kickButton = $('<input type="button" name="kick" onclick="moderate(this)" value="Kick ' + subscriberObject.stream.connection.data + '" class="' + subscriber.stream.connection.connectionId + '"></input>');
       kickButton.click(function() {
         moderate(kickButton, subscriberObject.stream);
       });
