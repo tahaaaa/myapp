@@ -30,7 +30,7 @@ router.get('/:roomName', function createRoomAndSessionCallback(req, res) {
     }
     else {
       tokenOptions.data = req.query.user;
-      if (req.query.mod) {
+      if (req.query.mod === 'true') {
         tokenOptions.role = 'moderator';
       }
       res.render('index', {

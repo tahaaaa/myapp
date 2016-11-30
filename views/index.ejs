@@ -11,6 +11,14 @@
 
 <style>
 
+body {
+  background-color: white;
+}
+
+p {
+  color: black;
+}
+
 .leftBar {
   position: absolute;
   left: 0;
@@ -39,33 +47,52 @@
   var messages = [];
   var videoId = false; // stores video ID, false means that archiving never occurred
   var session = OT.initSession('<%= apiKey %>', '<%= sessionId %>');
+  var currentlyPublish = false;
 
 
   session.connect('<%= token %>', function(error){
-    if(!error){
-      var publisher = OT.initPublisher("myFeed", {
-        insertMode: 'replace',
-        name: '<%= user %>'
-      });
-      session.publish(publisher);
-      $(function() {
-        $('#chat').draggable();
-        $('#myFeed').draggable();
-        $('#myFeed').resizable({
-          aspectRatio: true
-        });
-      });
+    // only automatically publish if you are moderator
+    if(!error && '<%= mod %>' === 'true'){
+      publish();
+      document.getElementById('raiseHandButton').style.visibility = "hidden";
     }
     else {
-      alert("Error!" + error)
+      document.getElementById('recordButton').style.visibility = "hidden";
+      console.log('You aren\'t a mod');
     }
   });
 
+  function publish() {
+    var publisher = OT.initPublisher("myFeed", {
+      insertMode: 'replace',
+      name: '<%= user %>'
+    });
+    session.publish(publisher);
+    currentlyPublish = true;
+
+    // make your window draggable and resizable
+    $(function() {
+      $('#chat').draggable();
+      $('#myFeed').draggable();
+      $('#myFeed').resizable({
+        aspectRatio: true
+      });
+    });
+  }
+
   session.on('streamCreated', function(subscriberObject){
     var subscriber = session.subscribe(subscriberObject.stream, document.getElementById('everyoneElse'), {insertMode: 'append'})
-    // button that lets moderator kick people
-    connectionIds[subscriber.stream.connection.connectionId] = {elem: subscriber.id};
-    $('#' + subscriber.id).after('<input type="button" name="kick" onclick="moderate(this.id)" value="Kick" id="' + subscriber.stream.connection.connectionId + '"></input>');
+    // store the ID for CSS manipulation
+    connectionIds[subscriberObject.stream.connection.connectionId] = {elem: subscriber.id};
+    // button that lets moderator kick people only for moderator
+    if('<%= mod %>' === 'true') {
+      var kickButton = $('<input type="button" name="kick" onclick="moderate(this)" value="Kick" class="' + subscriber.stream.connection.connectionId + '"></input>');
+      kickButton.click(function() {
+        moderate(kickButton, subscriberObject.stream);
+      });
+        $('#' + subscriber.id).after(kickButton);
+    }
+    // make the subscriber's video draggable and resizable
     $(function() {
       $('#' + subscriber.id).draggable();
       $('#' + subscriber.id).resizable({
@@ -75,62 +102,150 @@
   });
 
 
-//signaling and chat block starts here
-  function sendMessage(type){
-    session.signal(
-      {
-        type: 'text',
-        data: '<%= user %>' + ' : ' + document.getElementById(type).value
-      },
-      function(error){
-        if(error){
-          alert("Error when sending the message. " + error.code + "  " + error.message);
+// signaling and chat block starts here
+  function sendMessage(msgElem){
+    if(typeof document.getElementById(msgElem).value !== 'undefined') {
+      var msg = document.getElementById(msgElem).value;
+    }
+    else {
+      msgElem = msg;
+    }
+
+    if(msg == '' || msg == 'undefined' || msg == 'null') {
+      //do nothing
+    }
+    else {
+      session.signal(
+        {
+          type: 'text',
+          data: '<%= user %>' + ' : ' + msg
+        },
+        function(error){
+          if(error){
+            alert("Error when sending the message. " + error.code + "  " + error.message);
+          }
         }
-      }
-    )
+      );
+    }
   }
 
   function raiseHand() {
+    // if already publishing, don't do anything
+    if(!currentlyPublish) {
+      $('body').css("background-color","#3BB7FD");
+      session.signal(
+        {
+          type: 'handUp',
+          data: '<%= user %>'
+        },
+        function(error){
+          if(error){
+            alert("Error when sending the message. " + error.code + " " + error.message);
+          }
+        }
+      );
+    }
+  }
+
+  function lowerHand(button){
+    // remove middle finger
+    $(button).remove();
+
+    // reset flag to see if they've raised their hand already
+    connectionIds[button.className].hand = false;
+
+    // send signal to everyone else that hand has been lowered
     session.signal(
       {
-        type: 'hand',
+        type: 'handDown',
+        data: button.className
+      },
+      function(error){
+        if(error){
+          alert("Couldn't lower hand. " + error.code + " " + error.message);
+        }
+      }
+    );
+  }
+
+  function allowPublish(pubButton, connection) {
+    // gets rid of button now that you've allowed person to publish
+    pubButton.remove();
+
+    // check for a middle finger and remove if needed
+    if($('.' + connection.connectionId).length) {
+      lowerHand(document.getElementById(connection.connectionId));
+    }
+
+    session.signal(
+      {
+        type: 'allowPublish',
+        to: connection,
         data: '<%= user %>'
       },
       function(error){
         if(error){
-          alert("Error when sending the message. " + error.code + " " + error.message);
+          alert("Error, unable to allow publishing. " + error.code + "  " + error.message);
         }
       }
-    )
+    );
   }
 
-  function printChat() {
-    document.getElementById("chatbox").innerHTML = messages.join('<br>');
-  }
 
   session.on("signal", function receivedMessageCallback(signal) {
     if(signal.type === 'signal:text'){
       messages.push(signal.data);
       printChat();
     }
-    else if(signal.type === 'signal:hand'){
-      $('#' + connectionIds[signal.from.connectionId].elem).css({'border-style':'dashed',
-      'border-color':'blue',
-      'border-width':'3px'
-      });
-      $('#' + signal.from.connectionId).after('<input type="button" name="lowerHand" onclick=lowerHand(this) id="' + signal.from.connectionId + '" value="🖕"></input>');
+    else if(signal.type === 'signal:handUp' && '<%= mod %>' === 'true'){
+
+      // if hand was not already raised, and this user is a moderator, will add a button to lower the troublemaker's hand
+      if(!connectionIds[signal.from.connectionId].hand) {
+        connectionIds[signal.from.connectionId].hand = true;
+        // lower hand button
+        $('#everyoneElse').after('<input type="button" name="lowerHand" onclick="lowerHand(this)" class="' + signal.from.connectionId + '" value="🖕 ' + signal.data + '" id="' + signal.from.connectionId + '"></input>');
+      }
+
+      // if there is not already a pending publish request, this will add a publish button
+      if(!connectionIds[signal.from.connectionId].pub) {
+        connectionIds[signal.from.connectionId].pub = true;
+
+        // publish button with signal logic
+        var publishButton = $('<input type="button" name="allowPublish" class="' + signal.from.connectionId +'" value="Allow ' + signal.data + ' to Publish"></input>');
+        publishButton.click(function() {
+          allowPublish(publishButton, signal.from);
+        });
+        $('#everyoneElse').after(publishButton);
+      }
+    }
+    else if(signal.type === 'signal:handDown') {
+      if(signal.data === session.connection.connectionId) {
+        // set your own background to white if you are told to put your hand down
+        $('body').css("background-color","white");
+      }
+      else {
+        //$('#' + connectionIds[signal.data].elem).css({'border-style':'none'});
+      }
+    }
+    else if(signal.type === 'signal:allowPublish') {
+      // reset background
+      $('body').css("background-color","white");
+      publish();
+    }
+    else if(signal.type === 'signal:kicked') {
+      currentlyPublish = false;
     }
     else{
-      alert('Sorry, corrupted information received.');
+      console.log(signal);
     }
   });
-
-  function lowerHand(button){
-    $('#' + connectionIds[button.id].elem).css({'border-style':'none'});
-    $(button).remove();
-  }
 // signaling and chat block ends here
 
+
+// print chat
+function printChat() {
+  document.getElementById("chatbox").innerHTML = messages.join('<br>');
+}
 
 
 // connection event block starts here
@@ -141,8 +256,6 @@
   });
 
   session.on("connectionDestroyed", function(event){
-    // removes the attached kick button if someone disconnects
-    $('#' + event.connection.connectionId).remove();
     // deletes the connection ID from the array if someone disconnects
     delete connectionIds[event.connection.connectionId];
     messages.push(event.connection.data + ' just left');
@@ -153,9 +266,25 @@
 
 
 // moderation block begins here
-  function moderate(id) {
+  function moderate(button, stream) {
     if(session.capabilities.forceDisconnect == 1) {
-      session.forceDisconnect(id);
+      session.forceUnpublish(stream);
+      button.remove();
+      // sets currently publishing flag to false so they can make another request later
+      connectionIds[stream.connection.connectionId].pub = false;
+
+      // send signal to a person that they've been kicked
+      session.signal(
+        {
+          type: 'kicked',
+          data: ''
+        },
+        function(error){
+          if(error){
+            alert("Couldn't let them know they got kicked. " + error.code + " " + error.message);
+          }
+        }
+      );
     }
     else {
       alert('Sorry you aren\'t allowed to do this!');
@@ -197,7 +326,7 @@
 <!-- left bar has host's feed and the record button -->
   <div class="leftBar">
     <div id="myFeed"></div>
-    <input type="button" name="rec" onclick="record(this)" value="Record" />
+    <input type="button" name="rec" onclick="record(this)" value="Record" id="recordButton"/>
   </div>
 
 <!-- right bar has chat -->
@@ -207,7 +336,7 @@
       <form>
         <input type="text" id="chatSubmission" placeholder="Message">
         <button type="reset" onClick="sendMessage('chatSubmission')">Send</button>
-        <button type="button" onClick="raiseHand()">✋</button>
+        <button type="button" onClick="raiseHand()" id="raiseHandButton">✋</button>
       </form>
     </div>
   </div>
